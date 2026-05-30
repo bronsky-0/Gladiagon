@@ -2,7 +2,8 @@
     'use strict';
 
     var DEFAULT_PORT = 41235;
-    var SCAN_TIMEOUT_MS = 400;
+    var SCAN_TIMEOUT_MS = 800;
+    var CONNECT_TIMEOUT_MS = 5000;
     var SCAN_BATCH = 40;
 
     var networkState = {
@@ -76,11 +77,12 @@
         });
     }
 
-    function pingServer(baseUrl) {
+    function pingServer(baseUrl, timeoutMs) {
         var url = normalizeServerUrl(baseUrl);
         if (!url) return Promise.resolve(null);
+        var timeout = timeoutMs || SCAN_TIMEOUT_MS;
         var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-        var timer = controller ? setTimeout(function() { controller.abort(); }, SCAN_TIMEOUT_MS) : null;
+        var timer = controller ? setTimeout(function() { controller.abort(); }, timeout) : null;
         return fetch(url + '/api/ping', {
             signal: controller ? controller.signal : undefined
         }).then(function(res) {
@@ -100,6 +102,58 @@
         }).catch(function() {
             if (timer) clearTimeout(timer);
             return null;
+        });
+    }
+
+    function pingServerDetailed(baseUrl, timeoutMs) {
+        var url = normalizeServerUrl(baseUrl);
+        if (!url) {
+            return Promise.resolve({ ok: false, reason: 'empty', message: 'Укажите адрес сервера' });
+        }
+        var timeout = timeoutMs || CONNECT_TIMEOUT_MS;
+        var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        var timer = controller ? setTimeout(function() { controller.abort(); }, timeout) : null;
+        return fetch(url + '/api/ping', {
+            signal: controller ? controller.signal : undefined
+        }).then(function(res) {
+            if (timer) clearTimeout(timer);
+            if (!res.ok) {
+                return {
+                    ok: false,
+                    reason: 'http',
+                    message: 'Сервер ответил с ошибкой HTTP ' + res.status + ' (' + url + ')'
+                };
+            }
+            return res.json().then(function(data) {
+                if (!data.ok) {
+                    return { ok: false, reason: 'bad-response', message: 'Неверный ответ сервера' };
+                }
+                return {
+                    ok: true,
+                    info: {
+                        url: url,
+                        name: data.name,
+                        ips: data.ips || [],
+                        port: data.port || DEFAULT_PORT,
+                        arenaCount: data.arenaCount || 0,
+                        hasTournament: !!data.hasTournament
+                    }
+                };
+            });
+        }).catch(function(err) {
+            if (timer) clearTimeout(timer);
+            if (err && err.name === 'AbortError') {
+                return {
+                    ok: false,
+                    reason: 'timeout',
+                    message: 'Таймаут подключения к ' + url + '. Проверьте Wi‑Fi, IP и файрвол.'
+                };
+            }
+            return {
+                ok: false,
+                reason: 'network',
+                message: 'Не удалось достучаться до ' + url + '. Проверьте, что сервер запущен, устройства в одной сети, а адрес — не 127.0.0.1 с другого устройства.'
+            };
         });
     }
 
@@ -224,10 +278,11 @@
             networkState.deviceName = getDefaultDeviceName();
         }
 
-        return pingServer(url).then(function(info) {
-            if (!info) {
-                throw new Error('Сервер не отвечает: ' + url);
+        return pingServerDetailed(url, CONNECT_TIMEOUT_MS).then(function(result) {
+            if (!result.ok) {
+                throw new Error(result.message || ('Сервер не отвечает: ' + url));
             }
+            var info = result.info;
             networkState.enabled = true;
             networkState.connected = true;
             localStorage.setItem('gladiagonServerUrl', url);
@@ -344,6 +399,10 @@
             })
         }).then(function(data) {
             networkState.activeMatchKey = null;
+            if (data && data.state) {
+                networkState.remoteVersion = data.state.version || networkState.remoteVersion;
+                notifyState(data.state);
+            }
             return data;
         });
     }
@@ -362,7 +421,7 @@
     }
 
     function getTournamentSnapshot(gs) {
-        return {
+        return JSON.parse(JSON.stringify({
             sessionMode: gs.sessionMode,
             ruleset: gs.ruleset,
             tournamentSystem: gs.tournamentSystem,
@@ -373,8 +432,9 @@
             bracket: gs.bracket,
             playoffStarted: gs.playoffStarted,
             qualifyingAdvancersCount: gs.qualifyingAdvancersCount,
-            tournamentFightHistory: gs.tournamentFightHistory
-        };
+            tournamentFightHistory: gs.tournamentFightHistory,
+            hostSelectedArenaId: gs.hostSelectedArenaId || null
+        }));
     }
 
     function isNetworkEnabled() {
@@ -407,6 +467,7 @@
         autoConnectIfSaved: autoConnectIfSaved,
         discoverServers: discoverServers,
         pingServer: pingServer,
+        pingServerDetailed: pingServerDetailed,
         registerHost: registerHost,
         registerArena: registerArena,
         pushTournament: pushTournament,

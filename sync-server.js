@@ -40,11 +40,10 @@ function getLocalIps() {
 }
 
 function buildServerUrls(port, ips) {
-    const urls = ['http://127.0.0.1:' + port + '/'];
-    (ips || []).forEach(function(ip) {
-        urls.push('http://' + ip + ':' + port + '/');
+    const lanUrls = (ips || []).map(function(ip) {
+        return { url: 'http://' + ip + ':' + port + '/', local: false };
     });
-    return urls;
+    return lanUrls.concat([{ url: 'http://127.0.0.1:' + port + '/', local: true }]);
 }
 
 function createSyncServer(options) {
@@ -52,6 +51,32 @@ function createSyncServer(options) {
     const port = parseInt(options.port || process.env.GLADIAGON_PORT || DEFAULT_PORT, 10);
     const root = options.root || __dirname;
     const silent = !!options.silent;
+    const onLog = typeof options.onLog === 'function' ? options.onLog : null;
+    const maxLogs = options.maxLogs || 500;
+    const logs = [];
+
+    function log(level, message, meta) {
+        const entry = {
+            time: new Date().toISOString(),
+            level: level,
+            message: message,
+            meta: meta || null
+        };
+        logs.push(entry);
+        if (logs.length > maxLogs) logs.shift();
+        const line = '[' + entry.time + '] [' + level + '] ' + message +
+            (meta ? ' ' + JSON.stringify(meta) : '');
+        if (!silent) console.log(line);
+        if (onLog) onLog(entry, line);
+    }
+
+    function getClientIp(req) {
+        const forwarded = req.headers['x-forwarded-for'];
+        if (forwarded) return String(forwarded).split(',')[0].trim();
+        return req.socket && req.socket.remoteAddress
+            ? String(req.socket.remoteAddress).replace(/^::ffff:/, '')
+            : 'unknown';
+    }
 
     let state = {
         version: 0,
@@ -473,12 +498,15 @@ function createSyncServer(options) {
 
     function getInfo() {
         const ips = getLocalIps();
+        const urlEntries = buildServerUrls(port, ips);
         return {
             running: running,
             port: port,
             ips: ips,
-            urls: buildServerUrls(port, ips),
+            urls: urlEntries.map(function(item) { return item.url; }),
+            urlEntries: urlEntries,
             localUrl: 'http://127.0.0.1:' + port + '/',
+            lanUrls: urlEntries.filter(function(item) { return !item.local; }).map(function(item) { return item.url; }),
             discoveryPort: DISCOVERY_PORT,
             hostname: os.hostname()
         };
@@ -504,6 +532,7 @@ function createSyncServer(options) {
                 return;
             }
             httpServer.close(function() {
+                log('info', 'Server stopped');
                 httpServer = null;
                 running = false;
                 resolve();
@@ -518,32 +547,46 @@ function createSyncServer(options) {
 
         httpServer = http.createServer(async function(req, res) {
             const url = new URL(req.url, 'http://localhost');
+            const clientIp = getClientIp(req);
             if (url.pathname.startsWith('/api/')) {
+                log('info', req.method + ' ' + url.pathname, { ip: clientIp });
                 try {
                     await handleApi(req, res, url);
                 } catch (e) {
+                    log('error', 'API error ' + url.pathname + ': ' + (e.message || e), { ip: clientIp });
                     sendJson(res, 500, { error: e.message || 'Server error' });
                 }
                 return;
+            }
+            if (url.pathname === '/' || url.pathname.indexOf('.') !== -1) {
+                log('info', 'GET ' + url.pathname, { ip: clientIp });
             }
             serveStatic(req, res, url.pathname);
         });
 
         return new Promise(function(resolve, reject) {
-            httpServer.on('error', reject);
+            httpServer.on('error', function(err) {
+                log('error', 'HTTP server error: ' + (err.message || err));
+                reject(err);
+            });
             httpServer.listen(port, '0.0.0.0', function() {
                 running = true;
                 startDiscoveryBroadcast();
                 const info = getInfo();
+                log('info', 'Server started on port ' + port, {
+                    ips: info.ips,
+                    lanUrls: info.lanUrls
+                });
                 if (!silent) {
                     console.log('');
                     console.log('  Gladiagon sync-server');
                     console.log('  HTTP port:', port);
                     console.log('  UDP discovery port:', DISCOVERY_PORT);
                     console.log('');
-                    info.urls.forEach(function(url) {
-                        console.log('  Open:', url);
+                    info.lanUrls.forEach(function(url) {
+                        console.log('  LAN:', url);
                     });
+                    console.log('  Local:', info.localUrl);
                     console.log('');
                 }
                 resolve(info);
@@ -555,6 +598,8 @@ function createSyncServer(options) {
         start: start,
         stop: stop,
         getInfo: getInfo,
+        getLogs: function() { return logs.slice(); },
+        log: log,
         isRunning: function() { return running; },
         getPort: function() { return port; }
     };

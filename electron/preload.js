@@ -15,5 +15,11 @@ contextBridge.exposeInMainWorld('GladiagonDesktop', {
     },
     openExternal: function(url) {
         return ipcRenderer.invoke('desktop:openExternal', url);
+    },
+    getLogs: function() {
+        return ipcRenderer.invoke('desktop:getLogs');
+    },
+    openLogFile: function() {
+        return ipcRenderer.invoke('desktop:openLogFile');
     }
 });
