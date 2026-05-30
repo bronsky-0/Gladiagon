@@ -22,6 +22,7 @@
   "build": {
     "appId": "com.gladiagon.app",
     "productName": "Gladiagon",
+    "artifactName": "Gladiagon-Setup-${os}.${ext}",
     "directories": {
       "output": "dist"
     },
@@ -37,8 +38,7 @@
     "mac": {
       "category": "public.app-category.sports",
       "target": [
-        "dmg",
-        "zip"
+        "dmg"
       ]
     },
     "win": {
@@ -54,7 +54,14 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Gladiagon-Setup-win.${ext}"
+    },
+    "dmg": {
+      "artifactName": "Gladiagon-Setup-mac.${ext}"
+    },
+    "appImage": {
+      "artifactName": "Gladiagon-Setup-linux.${ext}"
     }
   }
 }

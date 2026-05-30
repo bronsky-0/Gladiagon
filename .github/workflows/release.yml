@@ -17,10 +17,13 @@ jobs:
         include:
           - os: macos-latest
             platform: mac
+            asset: Gladiagon-Setup-mac.dmg
           - os: windows-latest
             platform: win
+            asset: Gladiagon-Setup-win.exe
           - os: ubuntu-latest
             platform: linux
+            asset: Gladiagon-Setup-linux.AppImage
 
     runs-on: ${{ matrix.os }}
 
@@ -41,11 +44,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload artifacts
+      - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
           name: gladiagon-${{ matrix.platform }}
-          path: dist/*
+          path: dist/${{ matrix.asset }}
           if-no-files-found: error
 
   release:
@@ -54,16 +57,40 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
 
     steps:
-      - name: Download all artifacts
+      - name: Download installers
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          path: installers
           merge-multiple: true
+
+      - name: List release files
+        run: ls -la installers/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: artifacts/**
+          body: |
+            ## Установка Gladiagon
+
+            На странице релиза — **только установщики** (3 файла). Выберите файл для вашей системы:
+
+            | Платформа | Файл |
+            |-----------|------|
+            | **Windows** | [Gladiagon-Setup-win.exe](https://github.com/${{ github.repository }}/releases/latest/download/Gladiagon-Setup-win.exe) |
+            | **macOS** | [Gladiagon-Setup-mac.dmg](https://github.com/${{ github.repository }}/releases/latest/download/Gladiagon-Setup-mac.dmg) |
+            | **Linux** | [Gladiagon-Setup-linux.AppImage](https://github.com/${{ github.repository }}/releases/latest/download/Gladiagon-Setup-linux.AppImage) |
+
+            Страница последней версии: https://github.com/${{ github.repository }}/releases/latest
+
+            ### После установки
+            1. Откройте приложение Gladiagon
+            2. **Провести турнир** → рулсет → система → **Сеть турнира**
+            3. Нажмите **«Запустить сервер турнира»**
+            4. Передайте ссылку терминалам площадок в той же Wi‑Fi сети
+          files: |
+            installers/Gladiagon-Setup-mac.dmg
+            installers/Gladiagon-Setup-win.exe
+            installers/Gladiagon-Setup-linux.AppImage
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
